@@ -1,67 +1,48 @@
 # =====================================================
-# Python
+# CuraAI .gitignore
 # =====================================================
+
+# Python cache
 __pycache__/
-*.py[cod]
+*.pyc
 *.pyo
 *.pyd
-*.pycache/
-*.env
-*.env.*
-*.db
-*.sqlite3
 
-# =====================================================
-# Virtual Environment
-# =====================================================
+# Environment files
+.env
+.env.*
+
+# Logs
+*.log
+
+# Virtual environments
 venv/
 env/
 .venv/
-.env/
+.env
 
-# =====================================================
-# IDE / Editor
-# =====================================================
+# VS Code
 .vscode/
-.idea/
-*.sublime-project
-*.sublime-workspace
 
-# =====================================================
-# Logs / Runtime files
-# =====================================================
-*.log
-*.pot
-*.mo
-*.pid
-*.swp
-
-# =====================================================
-# Hugging Face / Transformers cache
-# =====================================================
-~/.cache/huggingface/
-~/.cache/torch/
-~/.cache/transformers/
-~/.cache/hub/
-
-# =====================================================
-# Pinecone (optional)
-# =====================================================
-pinecone_index/
-
-# =====================================================
 # Docker
-# =====================================================
 *.dockerfile
-Dockerfile.*
 docker-compose.override.yml
-__pycache__/
+*.pid
 
-# =====================================================
-# Misc
-# =====================================================
-*.zip
-*.tar.gz
+# Python packages
+*.egg
 *.egg-info/
 dist/
 build/
+*.whl
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Coverage reports
+htmlcov/
+.coverage
