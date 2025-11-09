@@ -1,48 +1,85 @@
 # =====================================================
-# CuraAI .gitignore
+# Python
 # =====================================================
-
-# Python cache
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
-# Environment files
-.env
-.env.*
-
-# Logs
-*.log
-
-# Virtual environments
-venv/
-env/
-.venv/
-.env
-
-# VS Code
-.vscode/
-
-# Docker
-*.dockerfile
-docker-compose.override.yml
-*.pid
-
-# Python packages
-*.egg
+*.py[cod]
 *.egg-info/
 dist/
 build/
-*.whl
+*.egg
+*.log
+*.sqlite3
 
-# Jupyter
-.ipynb_checkpoints/
+# =====================================================
+# Environment
+# =====================================================
+.env
+.env.*
+.venv/
+venv/
+*.env
 
-# OS files
-.DS_Store
-Thumbs.db
+# =====================================================
+# VS Code
+# =====================================================
+.vscode/
+.history/
+*.code-workspace
 
-# Coverage reports
-htmlcov/
-.coverage
+# =====================================================
+# Docker
+# =====================================================
+*.dockerfile
+docker-compose.override.yml
+docker-compose.override.yaml
+*.tar
+*.img
+__pycache__/
+*.log
+
+# =====================================================
+# Logs and temp files
+# =====================================================
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*.DS_Store
+
+# =====================================================
+# Git
+# =====================================================
+.gitignore
+.gitmodules
+*.orig
+*.rej
+
+# =====================================================
+# Jupyter Notebook
+# =====================================================
+.ipynb_checkpoints
+
+# =====================================================
+# Node (if you use for frontend)
+# =====================================================
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# =====================================================
+# Pinecone / Langchain cache (optional)
+# =====================================================
+vector_cache/
+langchain_cache/
+
+# =====================================================
+# Secrets and keys
+# =====================================================
+*.pem
+*.key
+*.crt
