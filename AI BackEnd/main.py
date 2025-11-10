@@ -151,16 +151,19 @@ async def ai_chat(data: QueryInput, x_api_key: str = Header(None)):
         raise HTTPException(status_code=403, detail="Forbidden: Invalid API key")
 
     try:
-        # Load user memory context
+        # Load session context from Pinecone memory
         context = ""
         if pinecone_manager:
             context = pinecone_manager.get_context(data.session_id)
 
-        # Generate response
-        response = chain.run(query=f"{context}\n\n{data.query.strip()}")
+        # Run main LLM chain
+        response = chain.run(
+            conversation_history=context or "",
+            query=data.query.strip()
+        )
         cleaned = clean_response(response)
 
-        # Store user + AI conversation
+        # Store user/AI pair into Pinecone
         if pinecone_manager:
             pinecone_manager.store_conversation(data.session_id, data.query, cleaned)
 

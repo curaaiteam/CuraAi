@@ -161,7 +161,10 @@ async def ai_chat(data: QueryInput, x_api_key: str = Header(None)):
             context = pinecone_manager.get_context(data.session_id)
 
         # Run main LLM chain
-        response = chain.run(query=f"{context}\n\n{data.query.strip()}")
+        response = chain.run(
+            conversation_history=context or "",
+            query=data.query.strip()
+        )
         cleaned = clean_response(response)
 
         # Store user/AI pair into Pinecone
