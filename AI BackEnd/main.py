@@ -41,7 +41,7 @@ app = FastAPI(title="CuraAi", version="1.0", description="Emotionally intelligen
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Update in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -61,13 +61,10 @@ else:
     logger.warning("⚠️ Missing Hugging Face token.")
 
 def load_model(model_name, token=None):
-    """
-    Load a text2text-generation model and wrap it for LangChain.
-    This wrapper ensures the pipeline output (a list of dicts) is converted to a string.
-    """
+    """Load the Hugging Face text2text-generation pipeline correctly for LangChain."""
     try:
         logger.info(f"🚀 Loading model: {model_name}")
-        text2text_pipe = pipeline(
+        pipe = pipeline(
             task="text2text-generation",
             model=model_name,
             device=DEVICE,
@@ -78,14 +75,8 @@ def load_model(model_name, token=None):
             do_sample=True,
             use_auth_token=token
         )
-
-        # Wrap pipeline to return a string instead of a list
-        def model_fn(prompt: str):
-            output = text2text_pipe(prompt)
-            return output[0]["generated_text"]
-
-        return HuggingFacePipeline(pipeline=model_fn)
-
+        # ✅ Pass pipeline object directly
+        return HuggingFacePipeline(pipeline=pipe)
     except Exception as e:
         logger.error(f"❌ Failed to load model {model_name}: {e}")
         raise e
@@ -137,7 +128,6 @@ except Exception as e:
 # HELPER FUNCTIONS
 # =====================================================
 def clean_response(text: str):
-    """Clean model output by removing unwanted markers, emojis, and long loops."""
     text = re.sub(r'\[End of conversation\]|\[END\]|<\|endoftext\|>|</s>', '', text, flags=re.IGNORECASE)
     text = re.sub(r'(😉|😊|✨|❤️){4,}', '', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
@@ -163,23 +153,21 @@ async def ai_chat(data: QueryInput, x_api_key: str = Header(None)):
         raise HTTPException(status_code=403, detail="Forbidden: Invalid API key")
 
     try:
-        # Load session context from Pinecone memory
         context = ""
         if pinecone_manager:
             context = pinecone_manager.get_context(data.session_id)
 
-        # Run main LLM chain
         response = chain.run(
             conversation_history=context or "",
             query=data.query.strip()
         )
         cleaned = clean_response(response)
 
-        # Store user/AI pair into Pinecone
         if pinecone_manager:
             pinecone_manager.store_conversation(data.session_id, data.query, cleaned)
 
         return {"reply": cleaned}
+
     except Exception as e:
         logger.error(f"⚠️ Runtime error: {e}")
         raise HTTPException(status_code=500, detail=f"Model failed to respond — {e}")
