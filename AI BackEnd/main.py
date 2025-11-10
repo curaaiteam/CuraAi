@@ -65,7 +65,7 @@ def load_model(model_name, token=None):
     try:
         logger.info(f"🚀 Loading model: {model_name}")
         pipe = pipeline(
-            task="text2text-generation",
+            "text2text-generation",
             model=model_name,
             device=DEVICE,
             max_new_tokens=512,
