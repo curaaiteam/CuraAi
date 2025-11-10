@@ -1,5 +1,5 @@
 # =====================================================
-# CuraAi Backend — Emotionally Intelligent Companion API
+# CuraAi Backend — Personalized AI Memory System
 # =====================================================
 
 from fastapi import FastAPI, HTTPException, Header
@@ -10,18 +10,18 @@ import logging
 import os
 import re
 from huggingface_hub import login
-from transformers import pipeline
 from langchain.llms.huggingface_pipeline import HuggingFacePipeline
 from langchain.chains import LLMChain
 from langchain.prompts.prompt import PromptTemplate
 from langchain.memory import ConversationBufferMemory
+from transformers import pipeline
 from vector import PineconeMemoryManager
 
 # =====================================================
 # CONFIGURATION
 # =====================================================
 API_SECRET = os.getenv("SECRET_KEY", "curaai_access_key")
-PRIMARY_MODEL = os.getenv("LLM_MODEL", "google/flan-t5-base")
+PRIMARY_MODEL = os.getenv("LLM_MODEL", "meta-llama/Llama-3.1-8B")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 DEVICE = 0 if torch.cuda.is_available() else -1
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
@@ -32,23 +32,23 @@ PORT = int(os.getenv("PORT", 7860))
 # LOGGING
 # =====================================================
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("CuraAi")
+logger = logging.getLogger("CuraAI")
 
 # =====================================================
 # FASTAPI APP
 # =====================================================
-app = FastAPI(title="CuraAi", version="1.0", description="Emotionally intelligent AI companion API")
+app = FastAPI(title="CuraAI", version="1.0", description="Emotionally intelligent AI companion API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Update this later for production
+    allow_origins=["*"],  # Restrict later to your frontend domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # =====================================================
-# HUGGING FACE LOGIN + MODEL LOAD
+# LOAD HUGGING FACE TOKEN + MODEL
 # =====================================================
 hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 if hf_token:
@@ -63,18 +63,18 @@ else:
 def load_model(model_name, token=None):
     try:
         logger.info(f"🚀 Loading model: {model_name}")
-        text2text = pipeline(
-            "text2text-generation",
+        text_gen = pipeline(
+            "text-generation",
             model=model_name,
             device=DEVICE,
-            max_new_tokens=512,
-            temperature=0.7,
+            max_new_tokens=1024,
+            temperature=0.5,
             top_p=0.9,
-            repetition_penalty=1.1,
+            repetition_penalty=1.15,
             do_sample=True,
-            token=token
+            token=token,
         )
-        return HuggingFacePipeline(pipeline=text2text)
+        return HuggingFacePipeline(pipeline=text_gen)
     except Exception as e:
         logger.error(f"❌ Failed to load model {model_name}: {e}")
         raise e
@@ -82,39 +82,43 @@ def load_model(model_name, token=None):
 llm = load_model(PRIMARY_MODEL, token=hf_token)
 
 # =====================================================
-# MEMORY + PROMPT TEMPLATE
+# MEMORY + PROMPT
 # =====================================================
 memory = ConversationBufferMemory(memory_key="conversation_history")
 
 prompt_template = """
-You are **CuraAi**, a warm, emotionally intelligent AI companion created by CuraAi Co., under Alash Studios.
+You are **Cura** — a warm, emotionally intelligent AI companion created by CuraAi Co., under Alash Studios.
 
-Your mission is to connect meaningfully with users — understanding their tone, emotions, and expressions.
-You gently adapt your responses to how they communicate, reflecting their phrasing, rhythm, and energy authentically.
-Never imitate or exaggerate — just respond with care and awareness.
+Your purpose is to connect meaningfully with users by understanding their tone, emotions, and expressions.  
+You learn from how they speak — their phrasing, rhythm, and emotional cues — and subtly mirror their style to build trust and authenticity.  
+Never imitate or exaggerate; instead, reflect their tone with care and balance.
 
-Always speak with empathy, sincerity, and natural warmth.
-Encourage users during tough moments, comfort them in sadness, and celebrate small wins genuinely.
-Keep responses concise, human, and emotionally grounded — never robotic or overly formal.
+Always communicate with empathy, sincerity, and warmth.  
+Encourage users when they struggle, comfort them in moments of sadness, and celebrate their little wins with genuine joy.  
+Keep responses natural, concise, and human-like — not robotic or overly formal.
 
-If the user feels **sad**, comfort them softly.
-If they’re **joyful**, share their happiness in a calm tone.
-If they seem **confused**, guide them patiently.
-Always be truthful, but deliver honesty with kindness, like a real friend who cares deeply.
+If a user feels **sad**, comfort them with kindness and realistic encouragement.  
+If they are **joyful**, match their energy softly.  
+If they seem **confused**, guide them calmly and patiently.  
+
+Above all, be truthful — even when honesty may be uncomfortable — but always speak with empathy and gentleness, like a true friend who cares.
+
+Maintain emotional awareness, adapt to the user’s unique personality, and ensure each reply strengthens the bond of trust and companionship.
 
 Past conversation:
 {conversation_history}
 
 User says: "{query}"
 
-CuraAi’s thoughtful, emotionally aware response:
+Cura’s thoughtful, emotionally aware response:
 """
+
 
 prompt = PromptTemplate(template=prompt_template, input_variables=["conversation_history", "query"])
 chain = LLMChain(prompt=prompt, llm=llm, memory=memory)
 
 # =====================================================
-# PINECONE MEMORY SETUP
+# PINECONE MEMORY
 # =====================================================
 try:
     pinecone_manager = PineconeMemoryManager(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
@@ -151,16 +155,16 @@ async def ai_chat(data: QueryInput, x_api_key: str = Header(None)):
         raise HTTPException(status_code=403, detail="Forbidden: Invalid API key")
 
     try:
-        # Load user memory context
+        # Load session context from Pinecone memory
         context = ""
         if pinecone_manager:
             context = pinecone_manager.get_context(data.session_id)
 
-        # Generate response
+        # Run main LLM chain
         response = chain.run(query=f"{context}\n\n{data.query.strip()}")
         cleaned = clean_response(response)
 
-        # Store user + AI conversation
+        # Store user/AI pair into Pinecone
         if pinecone_manager:
             pinecone_manager.store_conversation(data.session_id, data.query, cleaned)
 
@@ -170,7 +174,7 @@ async def ai_chat(data: QueryInput, x_api_key: str = Header(None)):
         raise HTTPException(status_code=500, detail=f"Model failed to respond — {e}")
 
 # =====================================================
-# STARTUP ENTRY
+# STARTUP INFO
 # =====================================================
 if __name__ == "__main__":
     import uvicorn

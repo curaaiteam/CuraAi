@@ -1,0 +1,11 @@
+pinecone-client
+fastapi
+uvicorn[standard]
+torch
+transformers
+accelerate
+langchain==0.0.258
+huggingface-hub
+pydantic
+pinecone
+sentence_transformers
