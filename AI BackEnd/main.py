@@ -41,7 +41,7 @@ app = FastAPI(title="CuraAi", version="1.0", description="Emotionally intelligen
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Update this later for production
+    allow_origins=["*"],  # Update in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -61,10 +61,14 @@ else:
     logger.warning("⚠️ Missing Hugging Face token.")
 
 def load_model(model_name, token=None):
+    """
+    Load a text2text-generation model and wrap it for LangChain.
+    This wrapper ensures the pipeline output (a list of dicts) is converted to a string.
+    """
     try:
         logger.info(f"🚀 Loading model: {model_name}")
         text2text_pipe = pipeline(
-            task="text2text-generation",  # Flan-T5 requires text2text
+            task="text2text-generation",
             model=model_name,
             device=DEVICE,
             max_new_tokens=512,
@@ -74,7 +78,14 @@ def load_model(model_name, token=None):
             do_sample=True,
             use_auth_token=token
         )
-        return HuggingFacePipeline(pipeline=text2text_pipe)
+
+        # Wrap pipeline to return a string instead of a list
+        def model_fn(prompt: str):
+            output = text2text_pipe(prompt)
+            return output[0]["generated_text"]
+
+        return HuggingFacePipeline(pipeline=model_fn)
+
     except Exception as e:
         logger.error(f"❌ Failed to load model {model_name}: {e}")
         raise e
@@ -126,6 +137,7 @@ except Exception as e:
 # HELPER FUNCTIONS
 # =====================================================
 def clean_response(text: str):
+    """Clean model output by removing unwanted markers, emojis, and long loops."""
     text = re.sub(r'\[End of conversation\]|\[END\]|<\|endoftext\|>|</s>', '', text, flags=re.IGNORECASE)
     text = re.sub(r'(😉|😊|✨|❤️){4,}', '', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
