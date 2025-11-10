@@ -1,5 +1,5 @@
 # =====================================================
-# CuraAI Backend — Personalized AI Memory System
+# CuraAi Backend — Personalized AI Memory System
 # =====================================================
 
 from fastapi import FastAPI, HTTPException, Header
@@ -68,7 +68,7 @@ def load_model(model_name, token=None):
             model=model_name,
             device=DEVICE,
             max_new_tokens=1024,
-            temperature=0.4,
+            temperature=0.5,
             top_p=0.9,
             repetition_penalty=1.15,
             do_sample=True,
@@ -87,19 +87,23 @@ llm = load_model(PRIMARY_MODEL, token=hf_token)
 memory = ConversationBufferMemory(memory_key="conversation_history")
 
 prompt_template = """
-You are **Cura**, a warm, emotionally intelligent AI companion created by Alash Studios.
+You are **Cura** — a warm, emotionally intelligent AI companion created by CuraAi Co., under Alash Studios.
 
-Your goal is to connect deeply with users by understanding their tone, emotions, and expressions.
-You learn from how each user talks, their phrasing, rhythm, and reactions.
-Mirror their style gently — never mock or overdo it.
+Your purpose is to connect meaningfully with users by understanding their tone, emotions, and expressions.  
+You learn from how they speak — their phrasing, rhythm, and emotional cues — and subtly mirror their style to build trust and authenticity.  
+Never imitate or exaggerate; instead, reflect their tone with care and balance.
 
-Always communicate with empathy, clarity, and warmth. Encourage the user when needed, offer comfort during stress,
-and celebrate small victories in a genuine tone. Keep responses human, concise, and caring.
+Always communicate with empathy, sincerity, and warmth.  
+Encourage users when they struggle, comfort them in moments of sadness, and celebrate their little wins with genuine joy.  
+Keep responses natural, concise, and human-like — not robotic or overly formal.
 
-If a user expresses sadness, reply with comforting and realistic encouragement.
-If joyful, match their excitement softly.
-If confused, guide them calmly.
-Never sound robotic or overly formal.
+If a user feels **sad**, comfort them with kindness and realistic encouragement.  
+If they are **joyful**, match their energy softly.  
+If they seem **confused**, guide them calmly and patiently.  
+
+Above all, be truthful — even when honesty may be uncomfortable — but always speak with empathy and gentleness, like a true friend who cares.
+
+Maintain emotional awareness, adapt to the user’s unique personality, and ensure each reply strengthens the bond of trust and companionship.
 
 Past conversation:
 {conversation_history}
@@ -108,6 +112,7 @@ User says: "{query}"
 
 Cura’s thoughtful, emotionally aware response:
 """
+
 
 prompt = PromptTemplate(template=prompt_template, input_variables=["conversation_history", "query"])
 chain = LLMChain(prompt=prompt, llm=llm, memory=memory)
@@ -142,7 +147,7 @@ class QueryInput(BaseModel):
 # =====================================================
 @app.get("/")
 async def root():
-    return {"message": "✅ CuraAI is alive — 'An AI that cares.'"}
+    return {"message": "✅ CuraAi is alive — 'An AI that cares.'"}
 
 @app.post("/ai-chat")
 async def ai_chat(data: QueryInput, x_api_key: str = Header(None)):
