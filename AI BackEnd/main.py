@@ -63,8 +63,8 @@ else:
 def load_model(model_name, token=None):
     try:
         logger.info(f"🚀 Loading model: {model_name}")
-        text2text = pipeline(
-            "text2text-generation",
+        text2text_pipe = pipeline(
+            task="text2text-generation",  # Flan-T5 requires text2text
             model=model_name,
             device=DEVICE,
             max_new_tokens=512,
@@ -72,9 +72,9 @@ def load_model(model_name, token=None):
             top_p=0.9,
             repetition_penalty=1.1,
             do_sample=True,
-            token=token
+            use_auth_token=token
         )
-        return HuggingFacePipeline(pipeline=text2text)
+        return HuggingFacePipeline(pipeline=text2text_pipe)
     except Exception as e:
         logger.error(f"❌ Failed to load model {model_name}: {e}")
         raise e
