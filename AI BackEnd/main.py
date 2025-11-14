@@ -9,16 +9,20 @@ import torch
 import logging
 import os
 import re
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
+from langchain.llms.huggingface_pipeline import HuggingFacePipeline
+from langchain.chains import LLMChain
+from langchain.prompts.prompt import PromptTemplate
 from langchain.memory import ConversationBufferMemory
+from vector import PineconeMemoryManager
 
 # =====================================================
 # CONFIGURATION
 # =====================================================
 API_SECRET = os.getenv("SECRET_KEY", "curaai_access_key")
-PRIMARY_MODEL = os.getenv("LLM_MODEL", "google/flan-t5-small")  # Changed to small for 2CPU/8GB
-DEVICE = "cpu"  # Force CPU
-MAX_LENGTH = 256  # Reduced for stability
+PRIMARY_MODEL = os.getenv("LLM_MODEL", "google/flan-t5-base")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+DEVICE = -1  # CPU
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENVIRONMENT", "us-east-1")
 PORT = int(os.getenv("PORT", 7860))
@@ -43,228 +47,147 @@ app.add_middleware(
 )
 
 # =====================================================
-# MODEL LOADING (Direct Transformers - More Reliable)
+# HUGGING FACE LOGIN + MODEL LOAD
 # =====================================================
-model = None
-tokenizer = None
-
-def load_model_direct():
-    """Load model directly with transformers for better control"""
-    global model, tokenizer
+hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+if hf_token:
     try:
-        logger.info(f"🚀 Loading model: {PRIMARY_MODEL}")
+        from huggingface_hub import login
+        login(token=hf_token)
+        logger.info("🔐 Hugging Face token authenticated.")
+    except Exception as e:
+        logger.warning(f"⚠️ HF login failed: {e}")
+else:
+    logger.warning("⚠️ Missing Hugging Face token.")
+
+def load_model(model_name, token=None):
+    """Load the Hugging Face text2text-generation pipeline correctly for LangChain."""
+    try:
+        logger.info(f"🚀 Loading model: {model_name}")
         
-        # Load tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(
-            PRIMARY_MODEL,
-            token=os.getenv("HUGGINGFACEHUB_API_TOKEN")
-        )
-        
-        # Load model with minimal memory footprint
+        # Load model and tokenizer separately for better control
+        tokenizer = AutoTokenizer.from_pretrained(model_name, token=token)
         model = AutoModelForSeq2SeqLM.from_pretrained(
-            PRIMARY_MODEL,
-            torch_dtype=torch.float32,  # Use float32 for CPU
+            model_name, 
+            token=token,
             low_cpu_mem_usage=True,
-            token=os.getenv("HUGGINGFACEHUB_API_TOKEN")
+            torch_dtype=torch.float32
         )
         
-        model.eval()  # Set to evaluation mode
-        logger.info("✅ Model loaded successfully")
-        return True
-        
-    except Exception as e:
-        logger.error(f"❌ Failed to load model: {e}")
-        return False
-
-# Load model at startup
-load_model_direct()
-
-# =====================================================
-# MEMORY MANAGEMENT
-# =====================================================
-# Simple in-memory conversation storage (replacing Pinecone for now)
-conversation_store = {}
-
-def get_conversation_history(session_id: str, max_turns: int = 3):
-    """Get last N turns of conversation"""
-    if session_id not in conversation_store:
-        conversation_store[session_id] = []
-    
-    history = conversation_store[session_id][-max_turns:]
-    return "\n".join([f"User: {h['user']}\nAI: {h['ai']}" for h in history])
-
-def store_conversation(session_id: str, user_msg: str, ai_msg: str):
-    """Store conversation turn"""
-    if session_id not in conversation_store:
-        conversation_store[session_id] = []
-    
-    conversation_store[session_id].append({
-        "user": user_msg,
-        "ai": ai_msg
-    })
-    
-    # Keep only last 10 turns to save memory
-    if len(conversation_store[session_id]) > 10:
-        conversation_store[session_id] = conversation_store[session_id][-10:]
-
-# =====================================================
-# PROMPT TEMPLATE (Simplified for small model)
-# =====================================================
-def create_prompt(query: str, history: str = ""):
-    """Create a concise prompt for the model"""
-    if history:
-        return f"""You are CuraAi, a caring AI companion.
-
-Previous conversation:
-{history}
-
-User: {query}
-
-Respond with empathy and warmth:"""
-    else:
-        return f"""You are CuraAi, a caring AI companion.
-
-User: {query}
-
-Respond with empathy and warmth:"""
-
-# =====================================================
-# GENERATION FUNCTION
-# =====================================================
-def generate_response(prompt_text: str):
-    """Generate response using the model"""
-    try:
-        if model is None or tokenizer is None:
-            raise Exception("Model not loaded")
-        
-        # Tokenize input
-        inputs = tokenizer(
-            prompt_text,
-            return_tensors="pt",
-            max_length=512,
-            truncation=True,
-            padding=True
+        # Create pipeline with explicit model and tokenizer
+        pipe = pipeline(
+            "text2text-generation",
+            model=model,
+            tokenizer=tokenizer,
+            device=DEVICE,
+            max_new_tokens=512,
+            temperature=0.7,
+            top_p=0.9,
+            repetition_penalty=1.1,
+            do_sample=True
         )
         
-        # Generate with conservative parameters for stability
-        with torch.no_grad():
-            outputs = model.generate(
-                inputs.input_ids,
-                max_length=MAX_LENGTH,
-                min_length=20,
-                temperature=0.7,
-                top_p=0.9,
-                top_k=50,
-                do_sample=True,
-                num_beams=1,  # Greedy for speed
-                repetition_penalty=1.2,
-                no_repeat_ngram_size=3,
-                early_stopping=True,
-                pad_token_id=tokenizer.pad_token_id,
-                eos_token_id=tokenizer.eos_token_id
-            )
-        
-        # Decode response
-        response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        return response.strip()
+        # Wrap in HuggingFacePipeline
+        return HuggingFacePipeline(pipeline=pipe)
         
     except Exception as e:
-        logger.error(f"Generation error: {e}")
+        logger.error(f"❌ Failed to load model {model_name}: {e}")
         raise e
+
+llm = load_model(PRIMARY_MODEL, token=hf_token)
+
+# =====================================================
+# MEMORY + PROMPT TEMPLATE
+# =====================================================
+memory = ConversationBufferMemory(memory_key="conversation_history")
+
+prompt_template = """
+You are **CuraAi**, a warm, emotionally intelligent AI companion created by CuraAi Co., under Alash Studios.
+
+Your mission is to connect meaningfully with users — understanding their tone, emotions, and expressions.
+You gently adapt your responses to how they communicate, reflecting their phrasing, rhythm, and energy authentically.
+Never imitate or exaggerate — just respond with care and awareness.
+
+Always speak with empathy, sincerity, and natural warmth.
+Encourage users during tough moments, comfort them in sadness, and celebrate small wins genuinely.
+Keep responses concise, human, and emotionally grounded — never robotic or overly formal.
+
+If the user feels **sad**, comfort them softly.
+If they're **joyful**, share their happiness in a calm tone.
+If they seem **confused**, guide them patiently.
+Always be truthful, but deliver honesty with kindness, like a real friend who cares deeply.
+
+Past conversation:
+{conversation_history}
+
+User says: "{query}"
+
+CuraAi's thoughtful, emotionally aware response:
+"""
+
+prompt = PromptTemplate(template=prompt_template, input_variables=["conversation_history", "query"])
+chain = LLMChain(prompt=prompt, llm=llm, memory=memory)
+
+# =====================================================
+# PINECONE MEMORY SETUP
+# =====================================================
+try:
+    pinecone_manager = PineconeMemoryManager(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+except Exception as e:
+    logger.error(f"⚠️ Pinecone init failed: {e}")
+    pinecone_manager = None
 
 # =====================================================
 # HELPER FUNCTIONS
 # =====================================================
 def clean_response(text: str):
-    """Clean up the generated response"""
-    # Remove special tokens and artifacts
     text = re.sub(r'\[End of conversation\]|\[END\]|<\|endoftext\|>|</s>', '', text, flags=re.IGNORECASE)
     text = re.sub(r'(😉|😊|✨|❤️){4,}', '', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
-    text = text.strip()
-    
-    # Limit length
-    if len(text) > 500:
-        text = text[:500].rsplit('.', 1)[0] + '.'
-    
-    return text
+    return text.strip()[:2000]
 
 # =====================================================
 # REQUEST MODEL
 # =====================================================
 class QueryInput(BaseModel):
     query: str
-    session_id: str = "default_user"
+    session_id: str | None = "default_user"
 
 # =====================================================
 # ROUTES
 # =====================================================
 @app.get("/")
 async def root():
-    return {
-        "message": "✅ CuraAi is alive — 'An AI that cares.'",
-        "model_loaded": model is not None,
-        "model_name": PRIMARY_MODEL
-    }
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy" if model is not None else "unhealthy",
-        "model": PRIMARY_MODEL,
-        "device": DEVICE
-    }
+    return {"message": "✅ CuraAi is alive — 'An AI that cares.'"}
 
 @app.post("/ai-chat")
 async def ai_chat(data: QueryInput, x_api_key: str = Header(None)):
-    """Main chat endpoint"""
     if x_api_key != API_SECRET:
         raise HTTPException(status_code=403, detail="Forbidden: Invalid API key")
-    
-    if model is None or tokenizer is None:
-        raise HTTPException(status_code=503, detail="Model not loaded")
-    
+
     try:
-        # Get conversation history
-        history = get_conversation_history(data.session_id)
-        
-        # Create prompt
-        prompt = create_prompt(data.query.strip(), history)
-        
-        # Generate response
-        logger.info(f"Generating response for session: {data.session_id}")
-        raw_response = generate_response(prompt)
-        
-        # Clean response
-        cleaned = clean_response(raw_response)
-        
-        # Store conversation
-        store_conversation(data.session_id, data.query, cleaned)
-        
-        return {
-            "reply": cleaned,
-            "session_id": data.session_id
-        }
-        
+        context = ""
+        if pinecone_manager:
+            context = pinecone_manager.get_context(data.session_id)
+
+        response = chain.run(
+            conversation_history=context or "",
+            query=data.query.strip()
+        )
+        cleaned = clean_response(response)
+
+        if pinecone_manager:
+            pinecone_manager.store_conversation(data.session_id, data.query, cleaned)
+
+        return {"reply": cleaned}
+
     except Exception as e:
         logger.error(f"⚠️ Runtime error: {e}")
-        raise HTTPException(status_code=500, detail=f"Model failed to respond: {str(e)}")
-
-@app.post("/clear-history")
-async def clear_history(session_id: str, x_api_key: str = Header(None)):
-    """Clear conversation history for a session"""
-    if x_api_key != API_SECRET:
-        raise HTTPException(status_code=403, detail="Forbidden: Invalid API key")
-    
-    if session_id in conversation_store:
-        del conversation_store[session_id]
-    
-    return {"message": f"History cleared for session: {session_id}"}
+        raise HTTPException(status_code=500, detail=f"Model failed to respond — {e}")
 
 # =====================================================
 # STARTUP ENTRY
 # =====================================================
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=False)
+    uvicorn.run("main:app", host="0.0.0.0", port=PORT)
