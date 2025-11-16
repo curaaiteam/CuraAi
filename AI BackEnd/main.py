@@ -191,6 +191,11 @@ async def ai_chat(data: QueryInput, x_api_key: str = Header(None)):
             conversation_history=context or "",
             query=data.query.strip()
         )
+        
+        # Handle both string and list responses
+        if isinstance(response, list):
+            response = response[0] if len(response) > 0 else ""
+        
         cleaned = clean_response(response)
 
         if pinecone_manager:
