@@ -168,6 +168,15 @@ async def ai_chat(data: QueryInput, x_api_key: str = Header(None)):
             query=data.query.strip()
         )
         
+        # Handle pipeline output format (list of dicts or string)
+        if isinstance(response, list):
+            if len(response) > 0 and isinstance(response[0], dict):
+                response = response[0].get('generated_text', '')
+            elif len(response) > 0:
+                response = str(response[0])
+            else:
+                response = ""
+        
         cleaned = clean_response(response)
 
         if pinecone_manager:
