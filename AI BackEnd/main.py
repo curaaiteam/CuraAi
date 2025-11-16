@@ -9,11 +9,12 @@ import torch
 import logging
 import os
 import re
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoConfig, pipeline
+from huggingface_hub import login
 from langchain.llms.huggingface_pipeline import HuggingFacePipeline
 from langchain.chains import LLMChain
 from langchain.prompts.prompt import PromptTemplate
 from langchain.memory import ConversationBufferMemory
+from transformers import pipeline
 from vector import PineconeMemoryManager
 
 # =====================================================
@@ -22,7 +23,7 @@ from vector import PineconeMemoryManager
 API_SECRET = os.getenv("SECRET_KEY", "curaai_access_key")
 PRIMARY_MODEL = os.getenv("LLM_MODEL", "google/gemma-3-270m-it")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-DEVICE = -1  # CPU
+DEVICE = 0 if torch.cuda.is_available() else -1
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENVIRONMENT", "us-east-1")
 PORT = int(os.getenv("PORT", 7860))
@@ -47,69 +48,41 @@ app.add_middleware(
 )
 
 # =====================================================
+# MODEL LOADING FUNCTION
+# =====================================================
+def load_model(model_name, token=None):
+    """Load the Hugging Face pipeline for LangChain."""
+    try:
+        logger.info(f"🚀 Loading model: {model_name}")
+        text_gen = pipeline(
+            "text-generation",
+            model=model_name,
+            device=DEVICE,
+            max_new_tokens=512,
+            temperature=0.7,
+            top_p=0.9,
+            repetition_penalty=1.1,
+            do_sample=True,
+            token=token
+        )
+        logger.info(f"✅ Model loaded successfully: {model_name}")
+        return HuggingFacePipeline(pipeline=text_gen)
+    except Exception as e:
+        logger.error(f"❌ Failed to load model {model_name}: {e}")
+        return None
+
+# =====================================================
 # HUGGING FACE LOGIN + MODEL LOAD
 # =====================================================
 hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 if hf_token:
     try:
-        from huggingface_hub import login
         login(token=hf_token)
         logger.info("🔐 Hugging Face token authenticated.")
     except Exception as e:
         logger.warning(f"⚠️ HF login failed: {e}")
 else:
     logger.warning("⚠️ Missing Hugging Face token.")
-
-def load_model(model_name, token=None):
-    """Load the Hugging Face pipeline correctly for LangChain."""
-    try:
-        logger.info(f"🚀 Loading model: {model_name}")
-        
-        # Load tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(model_name, token=token)
-        
-        # Detect model type and load appropriately
-        config = AutoConfig.from_pretrained(model_name, token=token)
-        
-        # Check if it's a seq2seq model or causal LM
-        if config.is_encoder_decoder:
-            # Seq2Seq models (T5, BART, etc.)
-            model = AutoModelForSeq2SeqLM.from_pretrained(
-                model_name, 
-                token=token,
-                low_cpu_mem_usage=True,
-                dtype=torch.float32
-            )
-            task = "text2text-generation"
-        else:
-            # Causal LM models (GPT, Gemma, etc.)
-            model = AutoModelForCausalLM.from_pretrained(
-                model_name, 
-                token=token,
-                low_cpu_mem_usage=True,
-                dtype=torch.float32
-            )
-            task = "text-generation"
-        
-        # Create pipeline with explicit model and tokenizer
-        pipe = pipeline(
-            task,
-            model=model,
-            tokenizer=tokenizer,
-            device=DEVICE,
-            max_new_tokens=512,
-            temperature=0.7,
-            top_p=0.9,
-            repetition_penalty=1.1,
-            do_sample=True
-        )
-        
-        # Wrap in HuggingFacePipeline
-        return HuggingFacePipeline(pipeline=pipe)
-        
-    except Exception as e:
-        logger.error(f"❌ Failed to load model {model_name}: {e}")
-        raise e
 
 llm = load_model(PRIMARY_MODEL, token=hf_token)
 
@@ -143,7 +116,7 @@ CuraAi's thoughtful, emotionally aware response:
 """
 
 prompt = PromptTemplate(template=prompt_template, input_variables=["conversation_history", "query"])
-chain = LLMChain(prompt=prompt, llm=llm, memory=memory)
+chain = LLMChain(prompt=prompt, llm=llm, memory=memory) if llm else None
 
 # =====================================================
 # PINECONE MEMORY SETUP
@@ -182,6 +155,9 @@ async def ai_chat(data: QueryInput, x_api_key: str = Header(None)):
     if x_api_key != API_SECRET:
         raise HTTPException(status_code=403, detail="Forbidden: Invalid API key")
 
+    if not chain:
+        raise HTTPException(status_code=500, detail="Model not initialized")
+
     try:
         context = ""
         if pinecone_manager:
@@ -191,10 +167,6 @@ async def ai_chat(data: QueryInput, x_api_key: str = Header(None)):
             conversation_history=context or "",
             query=data.query.strip()
         )
-        
-        # Handle both string and list responses
-        if isinstance(response, list):
-            response = response[0] if len(response) > 0 else ""
         
         cleaned = clean_response(response)
 
