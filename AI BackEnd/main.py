@@ -9,7 +9,7 @@ import torch
 import logging
 import os
 import re
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoConfig, pipeline
 from langchain.llms.huggingface_pipeline import HuggingFacePipeline
 from langchain.chains import LLMChain
 from langchain.prompts.prompt import PromptTemplate
@@ -20,7 +20,7 @@ from vector import PineconeMemoryManager
 # CONFIGURATION
 # =====================================================
 API_SECRET = os.getenv("SECRET_KEY", "curaai_access_key")
-PRIMARY_MODEL = os.getenv("LLM_MODEL", "google/flan-t5-base")
+PRIMARY_MODEL = os.getenv("LLM_MODEL", "google/gemma-3-270m-it")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 DEVICE = -1  # CPU
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
@@ -61,22 +61,39 @@ else:
     logger.warning("⚠️ Missing Hugging Face token.")
 
 def load_model(model_name, token=None):
-    """Load the Hugging Face text2text-generation pipeline correctly for LangChain."""
+    """Load the Hugging Face pipeline correctly for LangChain."""
     try:
         logger.info(f"🚀 Loading model: {model_name}")
         
-        # Load model and tokenizer separately for better control
+        # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained(model_name, token=token)
-        model = AutoModelForSeq2SeqLM.from_pretrained(
-            model_name, 
-            token=token,
-            low_cpu_mem_usage=True,
-            torch_dtype=torch.float32
-        )
+        
+        # Detect model type and load appropriately
+        config = AutoConfig.from_pretrained(model_name, token=token)
+        
+        # Check if it's a seq2seq model or causal LM
+        if config.is_encoder_decoder:
+            # Seq2Seq models (T5, BART, etc.)
+            model = AutoModelForSeq2SeqLM.from_pretrained(
+                model_name, 
+                token=token,
+                low_cpu_mem_usage=True,
+                dtype=torch.float32
+            )
+            task = "text2text-generation"
+        else:
+            # Causal LM models (GPT, Gemma, etc.)
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name, 
+                token=token,
+                low_cpu_mem_usage=True,
+                dtype=torch.float32
+            )
+            task = "text-generation"
         
         # Create pipeline with explicit model and tokenizer
         pipe = pipeline(
-            "text2text-generation",
+            task,
             model=model,
             tokenizer=tokenizer,
             device=DEVICE,
