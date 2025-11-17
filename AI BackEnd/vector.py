@@ -31,7 +31,7 @@ class PineconeMemoryManager:
 
     def _get_or_create_index(self, index_name: str, dimension: int = 384):
         """Check if index exists, create if not."""
-        existing_indexes = [idx.name() for idx in self.pc.list_indexes().indexes()]
+        existing_indexes = self.pc.list_indexes()  # returns a list of strings
         if index_name not in existing_indexes:
             self.pc.create_index(
                 name=index_name,
@@ -60,7 +60,7 @@ class PineconeMemoryManager:
     def get_context(self, session_id: str) -> str:
         """Fetch session summary from past conversations."""
         index_name = self._index_name(session_id)
-        existing_indexes = [idx.name() for idx in self.pc.list_indexes().indexes()]
+        existing_indexes = self.pc.list_indexes()  # fix applied here
         if index_name not in existing_indexes:
             return ""
 

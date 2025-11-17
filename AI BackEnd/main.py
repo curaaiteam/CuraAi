@@ -161,22 +161,30 @@ async def ai_chat(data: QueryInput, x_api_key: str = Header(None)):
     try:
         context = ""
         if pinecone_manager:
+            # fixed call — compatible with corrected Pinecone client
             context = pinecone_manager.get_context(data.session_id)
+
+        logger.info(f"Running chain with query: {data.query.strip()}")
 
         response = chain.run(
             conversation_history=context or "",
             query=data.query.strip()
         )
-        
-        # Handle pipeline output format (list of dicts or string)
+
+        logger.info(f"Raw response type: {type(response)}")
+        logger.info(f"Raw response: {response}")
+
         if isinstance(response, list):
+            logger.info("Response is a list, extracting text...")
             if len(response) > 0 and isinstance(response[0], dict):
                 response = response[0].get('generated_text', '')
             elif len(response) > 0:
                 response = str(response[0])
             else:
                 response = ""
-        
+
+        logger.info(f"Processed response: {response}")
+
         cleaned = clean_response(response)
 
         if pinecone_manager:
@@ -185,7 +193,7 @@ async def ai_chat(data: QueryInput, x_api_key: str = Header(None)):
         return {"reply": cleaned}
 
     except Exception as e:
-        logger.error(f"⚠️ Runtime error: {e}")
+        logger.error(f"⚠️ Runtime error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Model failed to respond — {e}")
 
 # =====================================================
