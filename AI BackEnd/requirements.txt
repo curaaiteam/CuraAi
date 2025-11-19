@@ -1,11 +1,16 @@
-pinecone-client
+# Core API
 fastapi
 uvicorn[standard]
-torch
-transformers
-accelerate
+pydantic
+
+# LLM and Vector Storage
+llama-cpp-python
 langchain==0.0.258
 huggingface-hub
-pydantic
-pinecone
 sentence_transformers
+
+# Vector Database
+pinecone
+
+# PyTorch (required by sentence_transformers)
+torch

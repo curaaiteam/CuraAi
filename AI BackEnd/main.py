@@ -1,29 +1,32 @@
 # =====================================================
 # CuraAi Backend — Emotionally Intelligent Companion API
+# Optimized for CPU with GGUF Quantization
 # =====================================================
 
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import torch
 import logging
 import os
 import re
-from huggingface_hub import login
-from langchain.llms.huggingface_pipeline import HuggingFacePipeline
+from huggingface_hub import hf_hub_download
+from langchain.llms import LlamaCpp
 from langchain.chains import LLMChain
 from langchain.prompts.prompt import PromptTemplate
 from langchain.memory import ConversationBufferMemory
-from transformers import pipeline
 from vector import PineconeMemoryManager
 
 # =====================================================
 # CONFIGURATION
 # =====================================================
 API_SECRET = os.getenv("SECRET_KEY", "curaai_access_key")
-PRIMARY_MODEL = os.getenv("LLM_MODEL", "google/gemma-3-270m-it")
+# --- GGUF Model Configuration ---
+GGUF_REPO_ID = os.getenv("GGUF_REPO", "TheBloke/Phi-3-mini-4k-instruct-GGUF")
+GGUF_FILE = os.getenv("GGUF_FILE", "phi3-mini-4k-instruct-q4_k_m.gguf")
+# -------------------------------
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-DEVICE = 0 if torch.cuda.is_available() else -1
+# Llama-cpp-python uses n_gpu_layers. Set to 0 for CPU-only.
+N_GPU_LAYERS = 0
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENVIRONMENT", "us-east-1")
 PORT = int(os.getenv("PORT", 7860))
@@ -48,43 +51,40 @@ app.add_middleware(
 )
 
 # =====================================================
-# MODEL LOADING FUNCTION
+# MODEL LOADING FUNCTION (Updated for GGUF)
 # =====================================================
-def load_model(model_name, token=None):
-    """Load the Hugging Face pipeline for LangChain."""
+def load_gguf_model(repo_id: str, filename: str):
+    """Load a GGUF model using llama-cpp-python for LangChain."""
     try:
-        logger.info(f"🚀 Loading model: {model_name}")
-        text_gen = pipeline(
-            "text-generation",
-            model=model_name,
-            device=DEVICE,
-            max_new_tokens=512,
+        logger.info(f"🚀 Downloading GGUF model: {repo_id}/{filename}")
+        model_path = hf_hub_download(
+            repo_id=repo_id,
+            filename=filename,
+            resume_download=True
+        )
+        logger.info(f"✅ Model file downloaded to: {model_path}")
+
+        llm = LlamaCpp(
+            model_path=model_path,
+            n_gpu_layers=N_GPU_LAYERS,  # Set to 0 for CPU inference
+            n_batch=512,               # Adjust based on RAM, higher is faster
+            n_ctx=4096,                # Context window size
             temperature=0.7,
             top_p=0.9,
-            repetition_penalty=1.1,
-            do_sample=True,
-            token=token
+            repeat_penalty=1.1,
+            verbose=False,             # Set to True for llama-cpp debug logs
+            f16_kv=True,               # Use half-precision for key/value cache
         )
-        logger.info(f"✅ Model loaded successfully: {model_name}")
-        return HuggingFacePipeline(pipeline=text_gen)
+        logger.info(f"✅ GGUF Model loaded successfully: {filename}")
+        return llm
     except Exception as e:
-        logger.error(f"❌ Failed to load model {model_name}: {e}")
+        logger.error(f"❌ Failed to load GGUF model {repo_id}/{filename}: {e}")
         return None
 
 # =====================================================
-# HUGGING FACE LOGIN + MODEL LOAD
+# MODEL LOAD
 # =====================================================
-hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
-if hf_token:
-    try:
-        login(token=hf_token)
-        logger.info("🔐 Hugging Face token authenticated.")
-    except Exception as e:
-        logger.warning(f"⚠️ HF login failed: {e}")
-else:
-    logger.warning("⚠️ Missing Hugging Face token.")
-
-llm = load_model(PRIMARY_MODEL, token=hf_token)
+llm = load_gguf_model(GGUF_REPO_ID, GGUF_FILE)
 
 # =====================================================
 # MEMORY + PROMPT TEMPLATE
@@ -118,14 +118,22 @@ CuraAi's thoughtful, emotionally aware response:
 prompt = PromptTemplate(template=prompt_template, input_variables=["conversation_history", "query"])
 chain = LLMChain(prompt=prompt, llm=llm, memory=memory) if llm else None
 
+if chain is not None:
+    logger.info(f"✅ Chain initialized successfully with GGUF model: {type(chain.llm)}")
+else:
+    logger.error("❌ Chain initialization failed")
+
 # =====================================================
 # PINECONE MEMORY SETUP
 # =====================================================
-try:
-    pinecone_manager = PineconeMemoryManager(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
-except Exception as e:
-    logger.error(f"⚠️ Pinecone init failed: {e}")
-    pinecone_manager = None
+pinecone_manager = None
+if PINECONE_API_KEY:
+    try:
+        pinecone_manager = PineconeMemoryManager(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+    except Exception as e:
+        logger.error(f"⚠️ Pinecone init failed: {e}")
+else:
+    logger.warning("⚠️ PINECONE_API_KEY not set. Running without long-term memory.")
 
 # =====================================================
 # HELPER FUNCTIONS
@@ -161,8 +169,11 @@ async def ai_chat(data: QueryInput, x_api_key: str = Header(None)):
     try:
         context = ""
         if pinecone_manager:
-            # fixed call — compatible with corrected Pinecone client
-            context = pinecone_manager.get_context(data.session_id)
+            try:
+                context = pinecone_manager.get_context(data.session_id)
+            except Exception as e:
+                logger.error(f"⚠️ Failed to get context from Pinecone: {e}")
+                context = ""
 
         logger.info(f"Running chain with query: {data.query.strip()}")
 
@@ -170,25 +181,16 @@ async def ai_chat(data: QueryInput, x_api_key: str = Header(None)):
             conversation_history=context or "",
             query=data.query.strip()
         )
-
-        logger.info(f"Raw response type: {type(response)}")
-        logger.info(f"Raw response: {response}")
-
-        if isinstance(response, list):
-            logger.info("Response is a list, extracting text...")
-            if len(response) > 0 and isinstance(response[0], dict):
-                response = response[0].get('generated_text', '')
-            elif len(response) > 0:
-                response = str(response[0])
-            else:
-                response = ""
-
+        
         logger.info(f"Processed response: {response}")
-
+        
         cleaned = clean_response(response)
 
         if pinecone_manager:
-            pinecone_manager.store_conversation(data.session_id, data.query, cleaned)
+            try:
+                pinecone_manager.store_conversation(data.session_id, data.query, cleaned)
+            except Exception as e:
+                logger.error(f"⚠️ Failed to store conversation in Pinecone: {e}")
 
         return {"reply": cleaned}
 
