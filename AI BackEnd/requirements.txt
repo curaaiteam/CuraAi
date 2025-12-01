@@ -3,14 +3,20 @@ fastapi
 uvicorn[standard]
 pydantic
 
-# LLM and Vector Storage
-llama-cpp-python
+# Transformers and PyTorch (CPU-only)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+transformers
+accelerate
+
+# LangChain (CRITICAL: Use this exact version - it works!)
 langchain==0.0.258
+
+# Hugging Face Hub
 huggingface-hub
-sentence_transformers
+
+# Embeddings
+sentence-transformers
 
 # Vector Database
 pinecone
-
-# PyTorch (required by sentence_transformers)
-torch

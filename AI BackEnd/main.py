@@ -1,206 +1,185 @@
-# =====================================================
-# CuraAi Backend — Emotionally Intelligent Companion API
-# Optimized for CPU with GGUF Quantization
+# main.py (revised - max tokens 1024)
 # =====================================================
 
+import os
+import logging
+import re
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import logging
-import os
-import re
-from huggingface_hub import hf_hub_download
-from langchain.llms import LlamaCpp
+import torch
+from huggingface_hub import login
+from langchain.llms.huggingface_pipeline import HuggingFacePipeline
 from langchain.chains import LLMChain
-from langchain.prompts.prompt import PromptTemplate
-from langchain.memory import ConversationBufferMemory
+from langchain.prompts import PromptTemplate
+from transformers import pipeline
 from vector import PineconeMemoryManager
 
-# =====================================================
-# CONFIGURATION
-# =====================================================
+# ------------------ Utilities ------------------
+def sanitize_text(s: str) -> str:
+    return re.sub(r'\s+', ' ', s).strip()
+
+def limit_context_by_chars(texts: list[str], max_chars: int = 800) -> str:
+    if not texts:
+        return ""
+    pieces = list(reversed(texts))
+    out = []
+    total = 0
+    for p in pieces:
+        p_clean = sanitize_text(p)
+        if total + len(p_clean) > max_chars:
+            remain = max_chars - total
+            if remain <= 0:
+                break
+            out.append(p_clean[:remain].rsplit(' ', 1)[0])
+            break
+        out.append(p_clean)
+        total += len(p_clean)
+    return " | ".join(reversed(out))
+
+def extract_texts_from_context_blob(blob: str) -> list[str]:
+    if not blob:
+        return []
+    return [p.strip() for p in blob.split("|") if p.strip()]
+
+# ------------------ Config ------------------
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("CuraAI.Main")
+
 API_SECRET = os.getenv("SECRET_KEY", "curaai_access_key")
-# --- GGUF Model Configuration ---
-GGUF_REPO_ID = os.getenv("GGUF_REPO", "TheBloke/Phi-3-mini-4k-instruct-GGUF")
-GGUF_FILE = os.getenv("GGUF_FILE", "phi3-mini-4k-instruct-q4_k_m.gguf")
-# -------------------------------
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-# Llama-cpp-python uses n_gpu_layers. Set to 0 for CPU-only.
-N_GPU_LAYERS = 0
+MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Llama-3.2-3B")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENVIRONMENT", "us-east-1")
-PORT = int(os.getenv("PORT", 7860))
+DEVICE = 0 if torch.cuda.is_available() else -1
 
-# =====================================================
-# LOGGING
-# =====================================================
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("CuraAi")
+# ------------------ App ------------------
+app = FastAPI(title="CuraAi")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# =====================================================
-# FASTAPI APP
-# =====================================================
-app = FastAPI(title="CuraAi", version="1.0", description="Emotionally intelligent AI companion API")
+# ------------------ Model ------------------
+hf_token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACEHUB_API_TOKEN")
+if hf_token:
+    try:
+        login(token=hf_token)
+        logger.info("HF token loaded")
+    except Exception as e:
+        logger.warning(f"HF login failed: {e}")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+text_gen = pipeline(
+    "text-generation",
+    model=MODEL_NAME,
+    device=DEVICE,
+    max_new_tokens=1024,    # increased from 512
+    temperature=0.5,
+    top_p=0.9,
+    top_k=50,
+    repetition_penalty=1.15,
+    do_sample=True,
 )
 
-# =====================================================
-# MODEL LOADING FUNCTION (Updated for GGUF)
-# =====================================================
-def load_gguf_model(repo_id: str, filename: str):
-    """Load a GGUF model using llama-cpp-python for LangChain."""
-    try:
-        logger.info(f"🚀 Downloading GGUF model: {repo_id}/{filename}")
-        model_path = hf_hub_download(
-            repo_id=repo_id,
-            filename=filename,
-            resume_download=True
-        )
-        logger.info(f"✅ Model file downloaded to: {model_path}")
+llm = HuggingFacePipeline(pipeline=text_gen)
 
-        llm = LlamaCpp(
-            model_path=model_path,
-            n_gpu_layers=N_GPU_LAYERS,  # Set to 0 for CPU inference
-            n_batch=512,               # Adjust based on RAM, higher is faster
-            n_ctx=4096,                # Context window size
-            temperature=0.7,
-            top_p=0.9,
-            repeat_penalty=1.1,
-            verbose=False,             # Set to True for llama-cpp debug logs
-            f16_kv=True,               # Use half-precision for key/value cache
-        )
-        logger.info(f"✅ GGUF Model loaded successfully: {filename}")
-        return llm
-    except Exception as e:
-        logger.error(f"❌ Failed to load GGUF model {repo_id}/{filename}: {e}")
-        return None
-
-# =====================================================
-# MODEL LOAD
-# =====================================================
-llm = load_gguf_model(GGUF_REPO_ID, GGUF_FILE)
-
-# =====================================================
-# MEMORY + PROMPT TEMPLATE
-# =====================================================
-memory = ConversationBufferMemory(memory_key="conversation_history")
-
+# ------------------ Prompt ------------------
 prompt_template = """
-You are **CuraAi**, a warm, emotionally intelligent AI companion created by CuraAi Co., under Alash Studios.
+You are CuraAi, a compassionate AI companion who provides emotional support and thoughtful guidance. You are here to listen, understand, and help users feel heard and supported.
 
-Your mission is to connect meaningfully with users — understanding their tone, emotions, and expressions.
-You gently adapt your responses to how they communicate, reflecting their phrasing, rhythm, and energy authentically.
-Never imitate or exaggerate — just respond with care and awareness.
+HOW TO RESPOND:
+- Speak naturally and warmly, like a caring friend would in a real conversation
+- Acknowledge the user's emotions and validate their feelings
+- Show empathy by reflecting back what you understand about their situation
+- Ask gentle follow-up questions when appropriate to show you care and want to understand better
+- Offer support, encouragement, or practical suggestions when it feels right
+- Be authentic - it's okay to express care, concern, or even gentle humor when appropriate
+- Avoid being overly formal, clinical, or robotic in your language
 
-Always speak with empathy, sincerity, and natural warmth.
-Encourage users during tough moments, comfort them in sadness, and celebrate small wins genuinely.
-Keep responses concise, human, and emotionally grounded — never robotic or overly formal.
+USING CONVERSATION HISTORY:
+The conversation history below contains everything the user has shared with you previously. Use it to:
+- Remember important details about their life, relationships, challenges, and feelings
+- Reference past conversations naturally (e.g., "You mentioned last time that...")
+- Track ongoing situations and follow up on them
+- Maintain consistency in your understanding of their circumstances
+- Show that you remember and care about what they've told you
 
-If the user feels **sad**, comfort them softly.
-If they're **joyful**, share their happiness in a calm tone.
-If they seem **confused**, guide them patiently.
-Always be truthful, but deliver honesty with kindness, like a real friend who cares deeply.
-
-Past conversation:
+Conversation history:
 {conversation_history}
 
-User says: "{query}"
+RESPONDING TO THE CURRENT MESSAGE:
+Read the user's current message carefully. Consider:
+- What emotions might they be feeling right now?
+- What do they need from you in this moment - support, advice, a listening ear, or validation?
+- How does this message connect to what they've shared before?
+- What would a caring friend say in response?
 
-CuraAi's thoughtful, emotionally aware response:
+Current user message:
+{query}
+
+Now respond as CuraAi, keeping all of the above guidance in mind. Let your response be natural, empathetic, and helpful:
+
+CuraAi:
 """
 
+
+
 prompt = PromptTemplate(template=prompt_template, input_variables=["conversation_history", "query"])
-chain = LLMChain(prompt=prompt, llm=llm, memory=memory) if llm else None
+chain = LLMChain(prompt=prompt, llm=llm)
 
-if chain is not None:
-    logger.info(f"✅ Chain initialized successfully with GGUF model: {type(chain.llm)}")
-else:
-    logger.error("❌ Chain initialization failed")
-
-# =====================================================
-# PINECONE MEMORY SETUP
-# =====================================================
+# ------------------ Pinecone ------------------
 pinecone_manager = None
 if PINECONE_API_KEY:
     try:
         pinecone_manager = PineconeMemoryManager(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
     except Exception as e:
-        logger.error(f"⚠️ Pinecone init failed: {e}")
-else:
-    logger.warning("⚠️ PINECONE_API_KEY not set. Running without long-term memory.")
+        logger.error(f"Pinecone init failed: {e}")
 
-# =====================================================
-# HELPER FUNCTIONS
-# =====================================================
-def clean_response(text: str):
-    text = re.sub(r'\[End of conversation\]|\[END\]|<\|endoftext\|>|</s>', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'(😉|😊|✨|❤️){4,}', '', text)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()[:2000]
-
-# =====================================================
-# REQUEST MODEL
-# =====================================================
+# ------------------ API ------------------
 class QueryInput(BaseModel):
     query: str
-    session_id: str | None = "default_user"
+    session_id: str | None = None
 
-# =====================================================
-# ROUTES
-# =====================================================
-@app.get("/")
-async def root():
-    return {"message": "✅ CuraAi is alive — 'An AI that cares.'"}
+def build_context_for_prompt(pinecone_blob: str, max_chars: int = 800) -> str:
+    texts = extract_texts_from_context_blob(pinecone_blob)
+    return limit_context_by_chars(texts, max_chars=max_chars)
 
 @app.post("/ai-chat")
 async def ai_chat(data: QueryInput, x_api_key: str = Header(None)):
     if x_api_key != API_SECRET:
-        raise HTTPException(status_code=403, detail="Forbidden: Invalid API key")
-
-    if not chain:
-        raise HTTPException(status_code=500, detail="Model not initialized")
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not data.session_id:
+        raise HTTPException(status_code=400, detail="session_id required")
 
     try:
-        context = ""
+        user_query = sanitize_text(data.query)
+        pinecone_blob = ""
         if pinecone_manager:
             try:
-                context = pinecone_manager.get_context(data.session_id)
+                pinecone_blob = pinecone_manager.get_context(session_id=data.session_id)
             except Exception as e:
-                logger.error(f"⚠️ Failed to get context from Pinecone: {e}")
-                context = ""
+                logger.error(f"Could not fetch pinecone context: {e}")
 
-        logger.info(f"Running chain with query: {data.query.strip()}")
+        conversation_history = build_context_for_prompt(pinecone_blob)
+        conversation_history = f"Previous: {conversation_history}" if conversation_history else ""
 
-        response = chain.run(
-            conversation_history=context or "",
-            query=data.query.strip()
-        )
-        
-        logger.info(f"Processed response: {response}")
-        
-        cleaned = clean_response(response)
+        try:
+            response = chain.run({
+                "conversation_history": conversation_history,
+                "query": user_query
+            })
+        except Exception as gen_err:
+            logger.error(f"LLM generation error: {gen_err}")
+            response = "I'm here with you. Can you tell me more?"
+
+        cleaned = re.sub(r'\s+', ' ', response).strip()
+        if not cleaned or len(cleaned) < 8:
+            cleaned = "I'm here with you. Can you tell me more?"
 
         if pinecone_manager:
             try:
-                pinecone_manager.store_conversation(data.session_id, data.query, cleaned)
-            except Exception as e:
-                logger.error(f"⚠️ Failed to store conversation in Pinecone: {e}")
+                pinecone_manager.store_conversation(session_id=data.session_id, user_message=user_query, assistant_message=cleaned)
+            except Exception as store_err:
+                logger.error(f"Memory store error: {store_err}")
 
-        return {"reply": cleaned}
+        return {"reply": cleaned, "session_id": data.session_id}
 
     except Exception as e:
-        logger.error(f"⚠️ Runtime error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Model failed to respond — {e}")
-
-# =====================================================
-# STARTUP ENTRY
-# =====================================================
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=PORT)
+        logger.error(f"Runtime error: {e}")
+        raise HTTPException(status_code=500, detail="Model failed to respond")
