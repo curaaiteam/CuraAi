@@ -1,22 +1,40 @@
-# Core API
+# ------------------ Core API ------------------
 fastapi
 uvicorn[standard]
 pydantic
 
-# Transformers and PyTorch (CPU-only)
+# ------------------ Transformers & PyTorch ------------------
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch
 transformers
 accelerate
 
-# LangChain (CRITICAL: Use this exact version - it works!)
+# ------------------ LangChain ------------------
 langchain==0.0.258
 
-# Hugging Face Hub
+# ------------------ Hugging Face Hub ------------------
 huggingface-hub
 
-# Embeddings
+# ------------------ Embeddings ------------------
 sentence-transformers
 
-# Vector Database
+# ------------------ Vector Database ------------------
 pinecone
+
+# ------------------ Multimodal Support ------------------
+Pillow
+pytesseract
+python-multipart
+
+# ------------------ Audio & Speech Recognition ------------------
+torchaudio
+librosa
+soundfile
+openai-whisper
+
+# ------------------ OpenAI SDK ------------------
+openai
+
+# ------------------ Optional Utilities ------------------
+typing-extensions
+pytest

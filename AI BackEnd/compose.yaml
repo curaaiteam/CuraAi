@@ -1,0 +1,17 @@
+version: "3.9"
+
+services:
+  curaai:
+    build: .
+    container_name: curaai
+    ports:
+      - "7860:7860"
+    environment:
+      HF_TOKEN: "${HF_TOKEN}"
+      SECRET_KEY: "curaai_access_key"
+      MODEL_NAME: "Qwen/Qwen-3-1.7B-Instruct"
+      PINECONE_API_KEY: "${PINECONE_API_KEY}"
+      PINECONE_ENVIRONMENT: "us-east-1"
+      PINECONE_INDEX_BASE: "cura-user-memory"
+      EMBEDDING_MODEL: "sentence-transformers/all-MiniLM-L6-v2"
+    restart: unless-stopped

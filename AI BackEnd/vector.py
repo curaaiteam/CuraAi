@@ -1,132 +1,123 @@
-# vector.py
+# vector.py — Pinecone Memory Manager for CuraAi
 # =====================================================
-# PineconeMemoryManager — robust & defensive for new 'pinecone' client
-# =====================================================
-
 import logging
+import uuid
 import re
-import time
-from typing import List
-from pinecone import Pinecone, ServerlessSpec
-from sentence_transformers import SentenceTransformer
-import os
+from typing import List, Optional
 
-logger = logging.getLogger("CuraAI.VectorDB")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-DEFAULT_DIM = 384
+from sentence_transformers import SentenceTransformer
+from pinecone import Pinecone, ServerlessSpec
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("CuraAI.Vector")
+
+
+def sanitize(text: str) -> str:
+    return re.sub(r"[^a-z0-9\-:]", "-", text.lower())
 
 
 class PineconeMemoryManager:
-    def __init__(self, api_key: str, environment: str):
-        if not api_key:
-            raise ValueError("PINECONE_API_KEY must be set")
-        self.environment = environment
+    def __init__(
+        self,
+        api_key: str,
+        environment: str,
+        index_base: str,
+        embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2",
+    ):
+        self.embedder = SentenceTransformer(embedding_model)
         self.pc = Pinecone(api_key=api_key)
-        self.embedding_model = SentenceTransformer(EMBEDDING_MODEL)
-        logger.info(f"🔧 Pinecone client initialized. Environment: {environment}")
-        logger.info(f"🔤 Embedding model loaded: {EMBEDDING_MODEL}")
+        self.index_name = index_base
+        self.dimension = self.embedder.get_sentence_embedding_dimension()
 
-    def _index_name(self, session_id: str) -> str:
-        safe = re.sub(r'[^a-zA-Z0-9-]', '-', session_id.lower())
-        return f"curaai-{safe}"
+        if self.index_name not in self.pc.list_indexes().names():
+            self.pc.create_index(
+                name=self.index_name,
+                dimension=self.dimension,
+                metric="cosine",
+                spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+            )
 
-    def _list_index_names(self) -> List[str]:
-        try:
-            out = self.pc.list_indexes()
-            if isinstance(out, list) and out and isinstance(out[0], dict):
-                return [i.get("name") or i.get("index_name") for i in out]
-            if isinstance(out, list):
-                return out
-            return []
-        except Exception:
-            return []
+        self.index = self.pc.Index(self.index_name)
+        logger.info(f"Pinecone index `{self.index_name}` ready")
 
-    def _create_index(self, index_name: str, dimension: int = DEFAULT_DIM):
-        spec = ServerlessSpec(cloud="aws", region=self.environment)
-        try:
-            self.pc.create_index(name=index_name, dimension=dimension, metric="cosine", spec=spec)
-        except TypeError:
-            # fallback positional style
-            self.pc.create_index(index_name, dimension, "cosine", spec)
-        except Exception as e:
-            # allow already exists to pass
-            if "ALREADY_EXISTS" in str(e):
-                logger.info(f"Index {index_name} already exists, skipping creation.")
-            else:
-                raise
+    # -------------------------------------------------
+    def embed_text(self, text: str) -> List[float]:
+        return self.embedder.encode(text, normalize_embeddings=True).tolist()
 
-    def _get_or_create_index(self, index_name: str, dimension: int = DEFAULT_DIM):
-        existing = self._list_index_names()
-        if index_name in existing:
-            logger.debug(f"Using existing index: {index_name}")
+    # -------------------------------------------------
+    def _namespace(self, user_id: str, kind: str) -> str:
+        return sanitize(f"user:{user_id}:{kind}")
+
+    # -------------------------------------------------
+    def store_memory(
+        self,
+        user_id: str,
+        text: str,
+        importance: float,
+        memory_type: str,
+        session_id: Optional[str] = None,
+    ):
+        if not text.strip():
+            return
+
+        namespace = self._namespace(
+            user_id,
+            "session" if memory_type == "session" else "longterm",
+        )
+
+        vector = self.embed_text(text)
+        vector_id = str(uuid.uuid4())
+
+        metadata = {
+            "text": text,
+            "importance": float(min(max(importance, 0.0), 1.0)),
+            "type": memory_type,
+            "session_id": session_id,
+        }
+
+        self.index.upsert(
+            vectors=[{"id": vector_id, "values": vector, "metadata": metadata}],
+            namespace=namespace,
+        )
+
+    # -------------------------------------------------
+    def retrieve_memories(
+        self,
+        user_id: str,
+        query: str,
+        top_k: int = 4,
+    ) -> str:
+        query_vector = self.embed_text(query)
+
+        texts = []
+
+        for kind in ("session", "longterm"):
+            namespace = self._namespace(user_id, kind)
             try:
-                return self.pc.Index(index_name)
-            except AttributeError:
-                return self.pc.index(index_name)
+                res = self.index.query(
+                    vector=query_vector,
+                    top_k=top_k,
+                    include_metadata=True,
+                    namespace=namespace,
+                )
+                texts.extend(
+                    m.metadata.get("text", "")
+                    for m in sorted(
+                        res.matches,
+                        key=lambda x: x.metadata.get("importance", 0),
+                        reverse=True,
+                    )
+                )
+            except Exception:
+                continue
 
-        # create new index if missing
-        logger.info(f"Creating Pinecone index: {index_name}")
-        try:
-            self._create_index(index_name, dimension=dimension)
-            time.sleep(1)
-        except Exception as e:
-            if "ALREADY_EXISTS" in str(e):
-                logger.info(f"Index {index_name} already exists, using existing.")
-            else:
-                logger.error(f"Failed to create index {index_name}: {e}")
-                raise
-
-        try:
-            return self.pc.Index(index_name)
-        except AttributeError:
-            return self.pc.index(index_name)
+        return " | ".join(texts)
 
     # -------------------------------------------------
-    # Public: retrieve short context
-    # -------------------------------------------------
-    def get_context(self, session_id: str, top_k: int = 5) -> str:
-        index_name = self._index_name(session_id)
-        try:
-            index = self._get_or_create_index(index_name)
-            query_vec = self.embedding_model.encode("summary of past conversation").tolist()
-            results = index.query(vector=query_vec, top_k=top_k, include_metadata=True)
-            matches = getattr(results, "matches", None) or results.get("matches", []) if isinstance(results, dict) else []
-            texts = []
-            for m in matches:
-                meta = getattr(m, "metadata", None) or m.get("metadata", {})
-                if meta and "text" in meta:
-                    texts.append(meta["text"])
-            return " | ".join(texts)
-        except Exception as e:
-            logger.error(f"Error retrieving context for {session_id}: {e}")
-            return ""
-
-    # -------------------------------------------------
-    # Public: store conversation pair
-    # -------------------------------------------------
-    def store_conversation(self, session_id: str, user_message: str, assistant_message: str):
-        index_name = self._index_name(session_id)
-        try:
-            index = self._get_or_create_index(index_name)
-            ts = str(int(time.time() * 1000))
-            q_vec = self.embedding_model.encode(user_message).tolist()
-            r_vec = self.embedding_model.encode(assistant_message).tolist()
-            vectors = [
-                {
-                    "id": f"q-{ts}",
-                    "values": q_vec,
-                    "metadata": {"text": user_message, "role": "user", "timestamp": ts}
-                },
-                {
-                    "id": f"r-{ts}",
-                    "values": r_vec,
-                    "metadata": {"text": assistant_message, "role": "assistant", "timestamp": ts}
-                }
-            ]
-            index.upsert(vectors=vectors)
-            logger.info(f"Stored conversation vectors for session {session_id}")
-        except Exception as e:
-            if "ALREADY_EXISTS" in str(e):
-                logger.info(f"Vector already exists for session {session_id}, skipping.")
-            else:
-                logger.error(f"Error storing conversation for {session_id}: {e}")
+    def store_persona_update(self, user_id: str, persona_summary: str):
+        self.store_memory(
+            user_id=user_id,
+            text=persona_summary,
+            importance=0.9,
+            memory_type="persona",
+        )
