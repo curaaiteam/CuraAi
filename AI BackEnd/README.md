@@ -1,332 +1,132 @@
-# 🤖 CuraAi - Empathetic AI Companion AI Backend
+# CuraAi — Emotionally Intelligent AI Companion
 
-[![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+CuraAi is a production-grade conversational AI system designed to provide emotionally grounded support through advanced memory capabilities and stable persona management. The platform functions as a memory-aware companion that maintains context across sessions while adhering to strict safety and ethical boundaries.
 
-> An empathetic AI companion that provides emotional support and thoughtful guidance through conversational AI.
+## System Architecture
 
-## 🌟 Features
+CuraAi implements a sophisticated dual-layer memory system that combines immediate conversational context with persistent emotional intelligence. The architecture leverages in-session RAM buffering for real-time dialogue continuity alongside vector-based long-term storage through Pinecone, enabling the system to retain and retrieve emotionally significant information across extended user relationships.
 
-- 💬 **Conversational AI** - Natural, empathetic responses to user messages
-- 🧠 **Memory System** - Maintains conversation context using Pinecone vector database
-- 🔐 **Session Management** - Email-based user sessions for personalized interactions
-- 🚀 **REST API** - Easy-to-integrate FastAPI backend
-- 🌍 **CORS Enabled** - Ready for frontend integration
+The platform currently operates in production using FastAPI as its deployment framework, with Grok's latest reasoning model powering the conversational intelligence. Memory operations utilize a single Pinecone index deployed in AWS us-east-1, with strict namespace isolation ensuring complete user data segregation.
 
-## ⚠️ Important Notice
+## Performance Profile
 
-This API runs on **free-tier resources** with limited compute power:
-- **Initial Request**: ~90 seconds (1 min 30 sec)
-- **Subsequent Requests**: ~60-75 seconds (1 min - 1 min 15 sec)
+The system delivers consistent performance across typical usage patterns. Initial requests following cold starts complete within approximately ten seconds, while subsequent interactions achieve response times between five and eight seconds. This latency profile reflects the comprehensive processing pipeline that includes memory embedding generation, emotion-weighted retrieval operations, model inference execution, and vector database queries.
 
-Please implement appropriate loading indicators and set user expectations accordingly.
+## Core Capabilities
 
-## 📋 Table of Contents
+### Memory Management
 
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Usage](#usage)
-- [API Documentation](#api-documentation)
-- [Project Structure](#project-structure)
-- [Contributing](#contributing)
-- [License](#license)
+CuraAi maintains conversational continuity through an intelligent six-turn session buffer that captures recent dialogue context. This buffer operates at the session level, providing immediate recall without persisting beyond session boundaries. Every interaction benefits from this recent context, ensuring responses remain coherent and relevant to the ongoing conversation.
 
-## 🚀 Installation
+The system automatically evaluates conversational content for long-term storage potential. Rather than indiscriminately capturing all dialogue, CuraAi applies sophisticated analysis to identify personally significant statements, emotionally charged content, and persistent life themes. This selective approach prevents memory pollution while ensuring genuinely important information receives appropriate retention.
 
-### Prerequisites
+### Emotional Intelligence
 
-- Python 3.9 or higher
-- Pinecone account and API key
-- Hugging Face account (optional, for model access)
+Each stored memory receives a quantified importance score ranging from 0.3 to 1.0, calculated based on emotional language intensity, statement repetition patterns, and identity relevance. This scoring mechanism directly influences retrieval priority, ensuring that emotionally significant memories surface more readily during contextually appropriate moments.
 
-### Setup
+When session buffers reach capacity, CuraAi performs intelligent summarization that distills conversational essence into compact memory representations. These summaries capture key emotional and thematic elements while dramatically reducing storage requirements. This approach prevents context window overflow, eliminates memory fragmentation, and reduces retrieval noise.
 
-1. **Clone the repository**
-```bash
-git clone https://github.com/yourusername/curaai.git
-cd curaai
-```
+### Persona Stability
 
-2. **Create a virtual environment**
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
+The platform builds user understanding through deliberate, incremental updates rather than reactive adjustments. Persona modifications require substantial supporting evidence and clear patterns before implementation. This conservative approach ensures behavioral consistency, builds user trust, and enables natural relationship evolution without jarring discontinuities.
 
-3. **Install dependencies**
-```bash
-pip install -r requirements.txt
-```
+### Multimodal Processing
 
-4. **Create `.env` file**
-```bash
-cp .env.example .env
-```
+CuraAi extends beyond text-based interaction to support image interpretation through optical character recognition, audio transcription and analysis, and optional supplementary text input. All multimodal content undergoes interpretation and conversion to textual representation before entering the standard memory-aware processing pipeline, ensuring consistent handling regardless of input modality.
 
-5. **Configure environment variables** (see [Configuration](#configuration))
+## Safety Framework
 
-## ⚙️ Configuration
+The system operates under non-negotiable identity constraints that remain immune to prompt injection attempts or user override efforts. CuraAi explicitly maintains boundaries around its role limitations, consistently rejecting therapeutic positioning, diagnostic claims, or suggestions that it can replace professional human support. The platform actively encourages users to maintain real-world connections and seek appropriate professional assistance when situations warrant such intervention.
 
-Create a `.env` file in the root directory with the following variables:
+## API Interface
 
-```env
-# API Security
-SECRET_KEY=curaai_access_key
+The production API operates at the following base URL:
 
-# Pinecone Configuration
-PINECONE_API_KEY=your_pinecone_api_key_here
-PINECONE_ENVIRONMENT=us-east-1
-
-# Hugging Face (Optional)
-HF_TOKEN=your_huggingface_token_here
-HUGGINGFACEHUB_API_TOKEN=your_huggingface_token_here
-
-# Model Configuration
-MODEL_NAME=meta-llama/Llama-3.2-3B
-EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
-```
-
-### Environment Variables Explained
-
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `SECRET_KEY` | API authentication key | Yes |
-| `PINECONE_API_KEY` | Pinecone vector database API key | Yes |
-| `PINECONE_ENVIRONMENT` | Pinecone environment region | Yes |
-| `HF_TOKEN` | Hugging Face API token | Optional |
-| `MODEL_NAME` | LLM model identifier | Optional |
-| `EMBEDDING_MODEL` | Sentence transformer model | Optional |
-
-## 🎯 Usage
-
-### Running Locally
-
-```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-
-The API will be available at `http://localhost:8000`
-
-### Running in Production
-
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
-```
-
-### Testing the API
-
-```bash
-curl -X POST http://localhost:8000/ai-chat \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: curaai_access_key" \
-  -d '{
-    "query": "I need someone to talk to",
-    "session_id": "user@example.com"
-  }'
-```
-
-## 📚 API Documentation
-
-### Base URL
 ```
 https://curaaiteam-curaai.hf.space
 ```
 
-### Endpoint: POST `/ai-chat`
+### Endpoints
 
-Send a message and receive an empathetic AI response.
+#### Health Check
 
-#### Request Headers
 ```http
-Content-Type: application/json
-x-api-key: curaai_access_key
+GET /
 ```
 
-#### Request Body
+Returns system status confirmation.
+
+**Response:**
 ```json
 {
-  "query": "I'm feeling overwhelmed with work",
-  "session_id": "user@example.com"
+  "status": "ok"
 }
 ```
 
-#### Response
+#### Text Chat
+
+```http
+POST /ai-chat
+```
+
+**Request Body:**
 ```json
 {
-  "reply": "I hear you - feeling overwhelmed at work can be really draining. What's been weighing on you the most today?",
-  "session_id": "user@example.com"
+  "user_id": "user_123",
+  "session_id": "session_001",
+  "query": "I've been feeling really overwhelmed lately"
 }
 ```
 
-#### Error Responses
-
-| Status Code | Description |
-|-------------|-------------|
-| 400 | Missing session_id |
-| 403 | Invalid API key |
-| 500 | Model failed to respond |
-
-### Integration Examples
-
-#### JavaScript
-```javascript
-const sendMessage = async (userMessage, userEmail) => {
-  const response = await fetch('https://curaaiteam-curaai.hf.space/ai-chat', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': 'curaai_access_key'
-    },
-    body: JSON.stringify({
-      query: userMessage,
-      session_id: userEmail
-    })
-  });
-  
-  const data = await response.json();
-  return data.reply;
-};
+**Response:**
+```json
+{
+  "reply": "That sounds like a lot to carry. Do you want to talk about what's been weighing on you most?"
+}
 ```
 
-#### Python
-```python
-import requests
+#### Multimodal Input
 
-def send_message(user_message: str, user_email: str) -> str:
-    response = requests.post(
-        'https://curaaiteam-curaai.hf.space/ai-chat',
-        headers={
-            'Content-Type': 'application/json',
-            'x-api-key': 'curaai_access_key'
-        },
-        json={
-            'query': user_message,
-            'session_id': user_email
-        }
-    )
-    return response.json()['reply']
+```http
+POST /multimodal
 ```
 
-For complete API documentation, see [API_DOCS.md](API_DOCS.md)
+**Content-Type:** `multipart/form-data`
 
-## 📁 Project Structure
+**Form Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| user_id | text | yes | User identifier |
+| session_id | text | yes | Session identifier |
+| file | file | yes | Image or audio file |
+| text | text | no | Optional supplementary text |
+
+**Response:**
+```json
+{
+  "reply": "I've looked through what you shared. Want me to explain it or talk about what it brought up for you?"
+}
+```
+
+## Technical Foundation
+
+The processing pipeline follows a structured flow from client request through FastAPI routing, session buffer consultation, emotional analysis, Pinecone memory retrieval, persona control application, Grok model invocation, and finally response delivery. This architecture ensures comprehensive context awareness while maintaining processing efficiency.
+
+### Project Structure
 
 ```
 curaai/
-├── main.py              # FastAPI application and endpoints
-├── vector.py            # Pinecone memory management
-├── requirements.txt     # Python dependencies
-├── .env.example        # Environment variables template
-├── .env                # Environment variables (not in git)
-├── README.md           # This file
-└── API_DOCS.md         # Complete API documentation
+├── main.py              # API definitions, session management, model interactions
+├── vector.py            # Pinecone memory operations
+├── requirements.txt     # Dependency specifications
+└── README.md           # Documentation
 ```
 
-### Key Files
+## Proprietary Status
 
-- **`main.py`**: Contains the FastAPI application, LLM setup, and `/ai-chat` endpoint
-- **`vector.py`**: Manages Pinecone vector database operations for conversation memory
-- **`requirements.txt`**: Lists all Python package dependencies
-
-## 🛠️ Technical Stack
-
-- **Framework**: FastAPI
-- **LLM**: Llama 3.2 3B (via Hugging Face)
-- **Embeddings**: Sentence Transformers (all-MiniLM-L6-v2)
-- **Vector DB**: Pinecone
-- **ML Libraries**: PyTorch, Transformers, LangChain
-
-## 🔒 Security
-
-- API key authentication via headers
-- Email-based session isolation
-- No cross-session data leakage
-- CORS configured for all origins (configure appropriately for production)
-
-## 🧪 Testing
-
-### Manual Testing
-```bash
-# Test endpoint availability
-curl http://localhost:8000/
-
-# Test chat endpoint
-curl -X POST http://localhost:8000/ai-chat \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: curaai_access_key" \
-  -d '{"query": "Hello", "session_id": "test@example.com"}'
-```
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**Issue**: `403 Forbidden`
-- **Solution**: Check that `x-api-key` header matches your `SECRET_KEY` in `.env`
-
-**Issue**: `PINECONE_API_KEY must be set`
-- **Solution**: Ensure Pinecone API key is set in `.env` file
-
-**Issue**: Model download taking too long
-- **Solution**: First run downloads the model. Subsequent runs will be faster.
-
-**Issue**: CUDA out of memory
-- **Solution**: Reduce batch size or use CPU mode by setting `DEVICE=-1`
-
-## 📖 Documentation
-
-- [Complete API Documentation](API_DOCS.md)
-- [FastAPI Auto Docs](http://localhost:8000/docs) (when running locally)
-- [Pinecone Documentation](https://docs.pinecone.io/)
-
-## 🤝 Contributing
-
-Contributions are welcome! Please follow these steps:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Development Guidelines
-
-- Follow PEP 8 style guide for Python code
-- Add docstrings to all functions
-- Update documentation for API changes
-- Test thoroughly before submitting PR
-
-## 📝 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 👥 Authors
-
-- **CuraAi Team** - *Initial work*
-
-## 🙏 Acknowledgments
-
-- Hugging Face for model hosting
-- Pinecone for vector database
-- FastAPI community
-- Open source contributors
-
-## 📞 Support
-
-For issues, questions, or feature requests:
-- Open an issue on GitHub
-- Contact: support@curaai.com (if available)
-
-## 🗺️ Roadmap
-
-- [ ] Add user feedback mechanism
-- [ ] Implement conversation export feature
-- [ ] Add multi-language support
-- [ ] Improve response time optimization
-- [ ] Add analytics dashboard
-- [ ] Implement rate limiting per user
+This software remains strictly proprietary under private licensing terms. No permissions exist for copying, modification, redistribution, independent hosting, commercial exploitation, derivative model training, or public API exposure without explicit written authorization from CuraAi, Co. All intellectual property rights remain fully reserved.
 
 ---
 
-**Built with ❤️ by the CuraAi Team**
+**CuraAi** — A private AI system developed by CuraAi, Co, designed to provide meaningful companionship without replacing essential human connection.
